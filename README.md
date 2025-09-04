@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 # VProfile Containerized Application
 
 A complete multi-tier Java web application deployed using Docker containers with automated VM provisioning using Vagrant.
