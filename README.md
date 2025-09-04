@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # VProfile Containerized Application
 
 A complete multi-tier Java web application deployed using Docker containers with automated VM provisioning using Vagrant.
@@ -304,3 +305,6 @@ For issues and questions:
 2. Review container logs for specific error messages
 3. Ensure all prerequisites are properly installed
 4. Verify system resources are sufficient
+=======
+# End-to-end-containerized-deployment-local-vagrant-automation
+>>>>>>> 4d845a995870cbfe6b941cb7d635c8e3d6b97030
