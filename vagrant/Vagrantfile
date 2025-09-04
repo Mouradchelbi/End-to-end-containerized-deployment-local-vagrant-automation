@@ -1,0 +1,190 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # Ubuntu 22.04 LTS (Jammy Jellyfish)
+    config.vm.box = "ubuntu/jammy64"
+  # config.hostmanager.enabled = true 
+  # config.hostmanager.manage_host = true
+  
+  # VM configuration
+  config.vm.hostname = "ubuntu-vm"
+  config.vm.boot_timeout = 600
+  
+  # Network configuration
+  config.vm.network "private_network", ip: "192.168.56.10", auto_config: true
+  
+  # Port forwarding
+  config.vm.network "forwarded_port", guest: 80, host: 8080
+  config.vm.network "forwarded_port", guest: 3306, host: 3306
+  config.vm.network "forwarded_port", guest: 8080, host: 8081
+  config.vm.network "forwarded_port", guest: 11211, host: 11211
+  config.vm.network "forwarded_port", guest: 5672, host: 5672
+  config.vm.network "forwarded_port", guest: 15672, host: 15672
+  
+  # VirtualBox provider settings
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "Ubuntu-Docker-VM"
+    vb.memory = "4096"
+    vb.cpus = 2
+    vb.gui = false
+  end
+  
+  # Sync the parent project directory (works on Windows)
+  config.vm.synced_folder "../", "/home/vagrant/vprofile-project", 
+    type: "virtualbox",
+    owner: "vagrant", 
+    group: "vagrant", 
+    mount_options: ["dmode=775,fmode=664"]
+  
+  # Main provisioning script
+  config.vm.provision "shell", inline: <<-SHELL
+    # Update package list
+    apt-get update
+    
+    # Install prerequisites
+    apt-get install -y \
+      ca-certificates \
+      curl \
+      gnupg \
+      lsb-release \
+      git \
+      vim \
+      htop \
+      tree \
+      wget
+    
+    # Add Docker's official GPG key
+    mkdir -m 0755 -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    
+    # Add Docker repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Update package list with Docker repo
+    apt-get update
+    
+    # Install Docker Engine
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # Add vagrant user to docker group and sudo group
+    usermod -aG docker vagrant
+    usermod -aG sudo vagrant
+    
+    # Give vagrant user full permissions
+    echo "vagrant ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    
+    # Enable and start Docker service
+    systemctl enable docker
+    systemctl start docker
+    
+    # Restart Docker service to ensure group changes take effect
+    systemctl restart docker
+    
+    # Change docker socket permissions (temporary fix for immediate access)
+    chmod 666 /var/run/docker.sock
+    
+    # Install Docker Compose (standalone)
+    curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
+    
+    # Set proper permissions for synced folder
+    chown -R vagrant:vagrant /home/vagrant/vprofile-project
+    find /home/vagrant/vprofile-project -type d -exec chmod 755 {} \;
+    find /home/vagrant/vprofile-project -type f -exec chmod 644 {} \;
+    
+    # Make shell scripts executable
+    find /home/vagrant/vprofile-project -name "*.sh" -exec chmod +x {} \;
+    
+    # Verify installation
+    docker --version
+    docker-compose --version
+    
+    echo "Docker installation completed!"
+    echo "VM IP: 192.168.56.10"
+    echo "Project synced to: /home/vagrant/vprofile-project"
+  SHELL
+  
+  # Run as vagrant user to start docker compose
+  config.vm.provision "shell", privileged: false, inline: <<-SHELL
+    echo "=== Starting VProfile Application Setup ==="
+    
+    # Wait a moment to ensure Docker socket permissions are applied
+    sleep 5
+    
+    # Test Docker access
+    if ! docker ps > /dev/null 2>&1; then
+        echo "Docker permission issue detected. Attempting to fix..."
+        # Logout and login to refresh group membership
+        sudo su - vagrant -c 'docker ps' || true
+		
+    fi
+    
+    # Navigate to project directory
+    cd /home/vagrant/vprofile-project
+	
+    
+    # Show project structure
+    echo "Project structure:"
+    tree -L 2 . || ls -la
+    
+    # Check for compose file
+    if [ -f "compose.yaml" ]; then
+        echo "Found compose.yaml, building and starting services..."
+        
+        # Build and start all services in detached mode
+        docker-compose -f compose.yaml up -d --build
+        
+        # Wait for services to initialize
+        echo "Waiting 60 seconds for all services to initialize..."
+        sleep 60
+		
+		# Fix permissions on the ROOT directory inside the vproapp container
+        echo "Fixing permissions for Tomcat webapps ROOT directory..."
+  
+		docker exec vproapp chown -R tomcat:tomcat /usr/local/tomcat/webapps/ROOT
+				
+		        
+        # Show container status
+        echo "Container Status:"
+        docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}" || docker ps
+        
+        # Check service health
+        echo "\\nChecking service health..."
+        docker-compose -f compose.yaml ps || echo "Service status check failed"
+        
+        # Show logs if any containers failed
+        failed_containers=$(docker ps -a --filter "status=exited" --format "{{.Names}}" 2>/dev/null || echo "")
+        if [ ! -z "$failed_containers" ]; then
+            echo "\\nFailed containers detected:"
+            for container in $failed_containers; do
+                echo "=== Logs for $container ==="
+                docker logs $container --tail 20
+            done
+        fi
+        
+        echo "\\n=================================================="
+        echo "VProfile Application Deployment Status"
+        echo "=================================================="
+        echo "Web Application: http://192.168.56.10 or http://localhost:8080"
+        echo "Direct App: http://192.168.56.10:8080 or http://localhost:8081"
+        echo "Database: 192.168.56.10:3306 or localhost:3306"
+        echo "Memcached: 192.168.56.10:11211 or localhost:11211"
+        echo "RabbitMQ: 192.168.56.10:5672 or localhost:5672"
+        echo "RabbitMQ Management: http://192.168.56.10:15672 or http://localhost:15672"
+        echo "=================================================="
+        
+        # Final status check
+        running_containers=$(docker ps --format "{{.Names}}" 2>/dev/null | wc -l || echo "0")
+        echo "Total running containers: $running_containers"
+        
+    else
+        echo "ERROR: compose.yaml not found!"
+        echo "Available files in project root:"
+        ls -la
+        echo "Please ensure compose.yaml exists in the project root."
+    fi
+  SHELL
+end
