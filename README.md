@@ -1,7 +1,7 @@
 
 # VProfile Containerized -Monolithic Application
 
-A complete multi-tier Java web application deployed using Docker containers with automated VM provisioning using Vagrant.
+A complete multi-tier Java web application deployed using Docker containers with automated VM provisioning using Vagrant- Infra as code.
 
 ## Architecture Overview
 
